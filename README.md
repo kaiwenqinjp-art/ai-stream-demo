@@ -1,20 +1,18 @@
 # AI Stream Demo
 
-## Setup
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/kaiwenqinjp-art/ai-stream-demo.git
-   cd ai-stream-demo
-   ```
-2. Install the required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+A simple, full-stack demonstration of AI streaming on the front-end using Express.js backend and Server-Sent Events (SSE).
 
-## Usage
-To start the application, run:
+## 📋 Features
+
+- ✅ Server-Sent Events (SSE) streaming
+- ✅ Real-time character count tracking
+- ✅ Elapsed time and streaming speed metrics
+- ✅ Copy to clipboard functionality
+- ✅ Mock AI responses
+- ✅ Beautiful gradient UI
+
+## 🚀 Quick Start
+
+### 1. Install dependencies
 ```bash
-python app.py
-```
-
-Visit `http://localhost:5000` in your browser to view the application.
+npm install
