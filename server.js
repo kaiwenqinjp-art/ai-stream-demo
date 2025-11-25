@@ -12,11 +12,11 @@ const corsOptions = {
         
         // Allowed origins
         const allowedOrigins = [
-            'https://yourusername.github.io',  // Replace with your GitHub Pages URL
+            'https://kaiwenqinjp-art.github.io',
             'http://localhost:3000',
             'http://localhost:5500',
             'http://127.0.0.1:5500',
-            process.env.FRONTEND_URL          // Add this in Render environment variables
+            process.env.FRONTEND_URL
         ].filter(Boolean); // Remove undefined values
         
         // Check if origin is allowed
