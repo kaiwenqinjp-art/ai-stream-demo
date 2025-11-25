@@ -1,1 +1,13 @@
-{\n  "name": "ai-stream-demo",\n  "version": "1.0.0",\n  "description": "A simple Express server for AI streaming.",\n  "main": "server.js",\n  "scripts": {\n    "start": "node server.js"\n  },\n  "dependencies": {\n    "express": "^4.17.1"\n  }\n}
+{
+  "name": "ai-stream-demo",
+  "version": "1.0.0",
+  "description": "A simple Express server for AI streaming.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "cors": "^2.8.5"
+  }
+}
