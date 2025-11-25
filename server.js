@@ -64,54 +64,34 @@ const mockResponses = {
 // AI Stream endpoint
 app.post('/api/stream', (req, res) => {
     const { prompt } = req.body;
+    if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
-    if (!prompt) {
-        return res.status(400).json({ error: 'Prompt is required' });
-    }
-
-    // Set headers for Server-Sent Events
+    // SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // Important for nginx proxies (Render uses this)
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders(); // <-- REQUIRED
 
-    // Get response based on prompt keywords
-    const lowerPrompt = prompt.toLowerCase();
-    let responseText = mockResponses.default;
-    
-    // Check for keyword matches
-    for (const [key, value] of Object.entries(mockResponses)) {
-        if (key !== 'default' && lowerPrompt.includes(key)) {
-            responseText = value;
-            break;
-        }
-    }
+    // Optional: immediate initial event
+    res.write(`data: ${JSON.stringify({ init: true })}\n\n`);
 
-    // Add timestamp and user prompt info
-    const fullResponse = `📝 You asked: "${prompt}"\n\n${responseText}\n\n⏰ Generated at: ${new Date().toLocaleTimeString()}`;
-
-    // Stream the response character by character
+    const fullResponse = `Your result:\n${prompt}`;
     let index = 0;
-    const streamInterval = setInterval(() => {
+
+    const interval = setInterval(() => {
         if (index < fullResponse.length) {
-            const char = fullResponse[index];
-            res.write(`data: ${JSON.stringify({ chunk: char, done: false })}\n\n`);
+            res.write(`data: ${JSON.stringify({ chunk: fullResponse[index] })}\n\n`);
             index++;
         } else {
-            res.write(`data: ${JSON.stringify({ 
-                done: true, 
-                totalChars: fullResponse.length,
-                message: 'Stream complete'
-            })}\n\n`);
-            clearInterval(streamInterval);
+            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+            clearInterval(interval);
             res.end();
         }
-    }, 30); // 30ms per character = ~33 chars/second
+    }, 30);
 
-    // Handle client disconnect
     req.on('close', () => {
-        clearInterval(streamInterval);
-        console.log('Client disconnected from stream');
+        clearInterval(interval);
     });
 });
 
