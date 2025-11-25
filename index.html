@@ -24,7 +24,30 @@
             padding: 40px;
         }
         h1 { color: #333; margin-bottom: 10px; }
-        .subtitle { color: #666; margin-bottom: 30px; font-size: 14px; }
+        .subtitle { color: #666; margin-bottom: 20px; font-size: 14px; }
+        .config-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+        .config-label { 
+            color: #333; 
+            font-weight: 600; 
+            font-size: 12px;
+            margin-bottom: 8px;
+            display: block;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: monospace;
+        }
+        input[type="text"]:focus { outline: none; border-color: #667eea; }
         textarea {
             width: 100%;
             padding: 12px;
@@ -32,6 +55,7 @@
             border-radius: 6px;
             font-size: 14px;
             min-height: 80px;
+            resize: vertical;
         }
         textarea:focus { outline: none; border-color: #667eea; }
         .button-group {
@@ -69,6 +93,7 @@
             margin-bottom: 12px;
             display: flex;
             justify-content: space-between;
+            align-items: center;
         }
         .status-badge {
             display: inline-block;
@@ -107,12 +132,27 @@
         }
         .stat-label { color: #666; font-size: 12px; font-weight: 600; margin-bottom: 5px; }
         .stat-value { color: #333; font-size: 20px; font-weight: 700; }
+        .info-box {
+            background: #e7f3ff;
+            border: 1px solid #b3d7ff;
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #004085;
+        }
+        .info-box strong { display: block; margin-bottom: 5px; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🚀 AI Stream Handler Demo</h1>
         <p class="subtitle">Frontend + Backend streaming with Server-Sent Events</p>
+
+        <div class="config-section">
+            <label class="config-label" for="apiUrl">Backend API URL:</label>
+            <input type="text" id="apiUrl" value="https://ai-stream-demo.onrender.com/api/stream" />
+        </div>
 
         <form id="streamForm">
             <label for="prompt">Enter your prompt:</label>
@@ -145,6 +185,12 @@
                 <div class="stat-value" id="speed">0</div>
             </div>
         </div>
+
+        <div class="info-box">
+            <strong>💡 How it works:</strong>
+            The backend streams responses character-by-character using Server-Sent Events (SSE). 
+            Each character is sent every 30ms, simulating real-time AI generation.
+        </div>
     </div>
 
     <script>
@@ -160,18 +206,33 @@
                 this.copyBtn = document.getElementById('copyBtn');
                 this.prompt = document.getElementById('prompt');
                 this.form = document.getElementById('streamForm');
+                this.apiUrlInput = document.getElementById('apiUrl');
                 
                 this.charNum = 0;
                 this.startTime = null;
                 this.timerInterval = null;
                 
+                this.loadConfig();
                 this.attachListeners();
+            }
+
+            loadConfig() {
+                // Load saved API URL if exists
+                const savedUrl = localStorage.getItem('apiUrl');
+                if (savedUrl) {
+                    this.apiUrlInput.value = savedUrl;
+                }
+            }
+
+            saveConfig() {
+                localStorage.setItem('apiUrl', this.apiUrlInput.value);
             }
 
             attachListeners() {
                 this.form.addEventListener('submit', (e) => this.handleSubmit(e));
                 this.clearBtn.addEventListener('click', () => this.clearOutput());
                 this.copyBtn.addEventListener('click', () => this.copyToClipboard());
+                this.apiUrlInput.addEventListener('change', () => this.saveConfig());
             }
 
             setStatus(text, type = 'loading') {
@@ -217,18 +278,26 @@
             async handleSubmit(e) {
                 e.preventDefault();
                 const text = this.prompt.value.trim();
+                const apiUrl = this.apiUrlInput.value.trim();
+
                 if (!text) {
                     alert('Please enter a prompt');
                     return;
                 }
 
+                if (!apiUrl) {
+                    alert('Please enter the API URL');
+                    return;
+                }
+
+                this.saveConfig();
                 this.clearOutput();
                 this.setStatus('Connecting...', 'loading');
                 this.submitBtn.disabled = true;
                 this.startTimer();
 
                 try {
-                    await this.streamData(text);
+                    await this.streamData(text, apiUrl);
                     this.setStatus('Complete ✓', 'success');
                 } catch (error) {
                     console.error('Error:', error);
@@ -240,14 +309,16 @@
                 }
             }
 
-            async streamData(prompt) {
-                const response = await fetch('/api/stream', {
+            async streamData(prompt, apiUrl) {
+                const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ prompt })
                 });
 
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
