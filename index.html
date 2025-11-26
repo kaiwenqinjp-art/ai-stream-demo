@@ -147,7 +147,7 @@
 <body>
     <div class="container">
         <h1>🚀 AI Stream Handler Demo</h1>
-        <p class="subtitle">Frontend + Backend streaming with Server-Sent Events</p>
+        <p class="subtitle">Server-Sent Events Streaming</p>
 
         <div class="config-section">
             <label class="config-label" for="apiUrl">Backend API URL:</label>
@@ -299,14 +299,13 @@
                 this.submitBtn.disabled = true;
                 this.startTimer();
 
-                // Create abort controller for cancellation
                 this.abortController = new AbortController();
 
                 try {
                     await this.streamData(text, apiUrl);
                     this.setStatus('Complete ✓', 'success');
                 } catch (error) {
-                    console.error('Error:', error);
+                    console.error('Stream error:', error);
                     this.setStatus('Error ✗', 'error');
                     this.output.textContent += `\n\n[Error]: ${error.message}`;
                 } finally {
@@ -323,20 +322,20 @@
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/json',
-                        'Accept': 'text/event-stream'
                     },
                     body: JSON.stringify({ prompt }),
                     signal: this.abortController.signal
                 });
 
-                console.log('Response received:', response.status, response.statusText);
+                console.log('Response received:', response.status);
 
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
                 }
 
                 if (!response.body) {
-                    throw new Error('Response body is null');
+                    throw new Error('No response body - streaming not supported');
                 }
 
                 this.setStatus('Streaming...', 'loading');
@@ -350,24 +349,34 @@
                         const { done, value } = await reader.read();
                         
                         if (done) {
-                            console.log('Stream completed, done=true');
+                            console.log('Stream ended (done=true)');
                             break;
                         }
 
-                        // Decode the chunk
-                        const chunk = decoder.decode(value, { stream: true });
-                        buffer += chunk;
-                        
-                        // Process complete lines
+                        // Decode chunk
+                        const text = decoder.decode(value, { stream: true });
+                        buffer += text;
+
+                        // Split by newlines
                         const lines = buffer.split('\n');
-                        buffer = lines.pop() || ''; // Keep incomplete line in buffer
                         
+                        // Keep last incomplete line in buffer
+                        buffer = lines.pop() || '';
+
+                        // Process complete lines
                         for (const line of lines) {
-                            if (line.trim() === '') continue;
+                            const trimmed = line.trim();
                             
-                            if (line.startsWith('data: ')) {
+                            // Skip empty lines and comments
+                            if (!trimmed || trimmed.startsWith(':')) {
+                                continue;
+                            }
+
+                            // Process SSE data lines
+                            if (trimmed.startsWith('data:')) {
+                                const jsonStr = trimmed.substring(5).trim();
+                                
                                 try {
-                                    const jsonStr = line.substring(6);
                                     const data = JSON.parse(jsonStr);
                                     
                                     if (data.chunk) {
@@ -378,20 +387,14 @@
                                     }
                                     
                                     if (data.done) {
-                                        console.log('Received done signal');
+                                        console.log('Stream complete signal received');
                                         return;
                                     }
-                                } catch (e) {
-                                    console.error('Parse error for line:', line, e);
+                                } catch (parseError) {
+                                    console.error('JSON parse error:', parseError, 'Data:', jsonStr);
                                 }
                             }
                         }
-                    }
-                } catch (error) {
-                    if (error.name === 'AbortError') {
-                        console.log('Stream aborted by user');
-                    } else {
-                        throw error;
                     }
                 } finally {
                     reader.releaseLock();
