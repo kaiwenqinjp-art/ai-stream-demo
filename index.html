@@ -211,13 +211,13 @@
                 this.charNum = 0;
                 this.startTime = null;
                 this.timerInterval = null;
+                this.abortController = null;
                 
                 this.loadConfig();
                 this.attachListeners();
             }
 
             loadConfig() {
-                // Load saved API URL if exists
                 const savedUrl = localStorage.getItem('apiUrl');
                 if (savedUrl) {
                     this.apiUrlInput.value = savedUrl;
@@ -253,7 +253,10 @@
             }
 
             stopTimer() {
-                clearInterval(this.timerInterval);
+                if (this.timerInterval) {
+                    clearInterval(this.timerInterval);
+                    this.timerInterval = null;
+                }
             }
 
             clearOutput() {
@@ -296,6 +299,9 @@
                 this.submitBtn.disabled = true;
                 this.startTimer();
 
+                // Create abort controller for cancellation
+                this.abortController = new AbortController();
+
                 try {
                     await this.streamData(text, apiUrl);
                     this.setStatus('Complete ✓', 'success');
@@ -306,51 +312,89 @@
                 } finally {
                     this.submitBtn.disabled = false;
                     this.stopTimer();
+                    this.abortController = null;
                 }
             }
 
             async streamData(prompt, apiUrl) {
+                console.log('Starting fetch to:', apiUrl);
+                
                 const response = await fetch(apiUrl, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt })
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream'
+                    },
+                    body: JSON.stringify({ prompt }),
+                    signal: this.abortController.signal
                 });
+
+                console.log('Response received:', response.status, response.statusText);
 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
 
+                if (!response.body) {
+                    throw new Error('Response body is null');
+                }
+
+                this.setStatus('Streaming...', 'loading');
+
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
 
-                this.setStatus('Streaming...', 'loading');
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        
+                        if (done) {
+                            console.log('Stream completed, done=true');
+                            break;
+                        }
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    
-                    for (let i = 0; i < lines.length - 1; i++) {
-                        const line = lines[i];
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const data = JSON.parse(line.substring(6));
-                                if (data.chunk) {
-                                    this.output.textContent += data.chunk;
-                                    this.charNum++;
-                                    this.charCount.textContent = this.charNum;
-                                    this.output.scrollTop = this.output.scrollHeight;
+                        // Decode the chunk
+                        const chunk = decoder.decode(value, { stream: true });
+                        buffer += chunk;
+                        
+                        // Process complete lines
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+                        
+                        for (const line of lines) {
+                            if (line.trim() === '') continue;
+                            
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const jsonStr = line.substring(6);
+                                    const data = JSON.parse(jsonStr);
+                                    
+                                    if (data.chunk) {
+                                        this.output.textContent += data.chunk;
+                                        this.charNum++;
+                                        this.charCount.textContent = this.charNum;
+                                        this.output.scrollTop = this.output.scrollHeight;
+                                    }
+                                    
+                                    if (data.done) {
+                                        console.log('Received done signal');
+                                        return;
+                                    }
+                                } catch (e) {
+                                    console.error('Parse error for line:', line, e);
                                 }
-                                if (data.done) return;
-                            } catch (e) {
-                                console.error('Parse error:', e);
                             }
                         }
                     }
-                    buffer = lines[lines.length - 1];
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        console.log('Stream aborted by user');
+                    } else {
+                        throw error;
+                    }
+                } finally {
+                    reader.releaseLock();
                 }
             }
         }
