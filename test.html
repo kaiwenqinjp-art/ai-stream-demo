@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #00ff00;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 10px;
+            cursor: pointer;
+        }
+        #output {
+            border: 1px solid #00ff00;
+            padding: 10px;
+            margin-top: 20px;
+            min-height: 200px;
+            white-space: pre-wrap;
+        }
+        .log {
+            margin: 5px 0;
+            padding: 5px;
+            background: #2a2a2a;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 Stream Debug Test</h1>
+    <button onclick="testHealth()">1. Test Health</button>
+    <button onclick="testSimpleFetch()">2. Test Simple POST</button>
+    <button onclick="testStream()">3. Test Stream</button>
+    <button onclick="clearOutput()">Clear</button>
+    <div id="output"></div>
+
+    <script>
+        const API_URL = 'https://ai-stream-demo.onrender.com';
+        const output = document.getElementById('output');
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = 'log';
+            div.style.color = type === 'error' ? '#ff0000' : type === 'success' ? '#00ff00' : '#ffff00';
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            output.appendChild(div);
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function clearOutput() {
+            output.innerHTML = '';
+        }
+
+        async function testHealth() {
+            log('Testing health endpoint...', 'info');
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                log(`Status: ${response.status}`, 'success');
+                const data = await response.json();
+                log(`Response: ${JSON.stringify(data, null, 2)}`, 'success');
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                console.error(error);
+            }
+        }
+
+        async function testSimpleFetch() {
+            log('Testing simple POST to /api/stream...', 'info');
+            try {
+                const response = await fetch(`${API_URL}/api/stream`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ prompt: 'hello' })
+                });
+                
+                log(`Status: ${response.status}`, 'success');
+                log(`Headers: ${response.headers.get('content-type')}`, 'info');
+                
+                // Try to read as text first
+                const text = await response.text();
+                log(`Response length: ${text.length} chars`, 'success');
+                log(`First 200 chars: ${text.substring(0, 200)}`, 'info');
+                
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                console.error(error);
+            }
+        }
+
+        async function testStream() {
+            log('Testing actual stream...', 'info');
+            try {
+                const response = await fetch(`${API_URL}/api/stream`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream'
+                    },
+                    body: JSON.stringify({ prompt: 'hello' })
+                });
+
+                log(`Response status: ${response.status}`, 'success');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                if (!response.body) {
+                    throw new Error('No response body');
+                }
+
+                log('Starting to read stream...', 'info');
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let charCount = 0;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) {
+                        log('Stream finished (done=true)', 'success');
+                        break;
+                    }
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    log(`Received chunk: ${chunk.length} bytes`, 'info');
+                    buffer += chunk;
+
+                    // Process lines
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                if (data.chunk) {
+                                    process.stdout?.write?.(data.chunk) || log(data.chunk, 'success');
+                                    charCount++;
+                                }
+                                if (data.done) {
+                                    log(`Stream complete! Total chars: ${charCount}`, 'success');
+                                    return;
+                                }
+                            } catch (e) {
+                                log(`Parse error: ${e.message}`, 'error');
+                            }
+                        }
+                    }
+                }
+
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        }
+    </script>
+</body>
+</html>
