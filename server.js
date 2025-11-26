@@ -4,29 +4,48 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS Configuration - Allow all origins
-const corsOptions = {
+// Disable compression for SSE
+app.use((req, res, next) => {
+    res.set('X-Accel-Buffering', 'no');
+    next();
+});
+
+// CORS Configuration - Secure whitelist
+const allowedOrigins = [
+    'https://kaiwenqinjp-art.github.io',
+    'https://ai-stream-demo.onrender.com',  // Allow Render's own domain
+    'http://localhost:3000',
+    'http://localhost:5500',
+    'http://127.0.0.1:5500',
+    'http://127.0.0.1:3000'
+];
+
+app.use(cors({
     origin: function (origin, callback) {
-        // Allow requests with no origin (like Postman, curl, same-origin)
-        if (!origin) return callback(null, true);
+        // Allow requests with no origin (like mobile apps, Postman, curl)
+        if (!origin) {
+            return callback(null, true);
+        }
         
-        // For debugging - log all origins
-        console.log('Request from origin:', origin);
+        // Check if origin is allowed
+        const isAllowed = allowedOrigins.some(allowed => 
+            origin === allowed || origin.startsWith(allowed)
+        );
         
-        // Allow all origins (you can restrict this later)
-        callback(null, true);
+        if (isAllowed) {
+            console.log('✅ Allowed origin:', origin);
+            callback(null, true);
+        } else {
+            console.log('🚫 Blocked origin:', origin);
+            callback(new Error('Not allowed by CORS'));
+        }
     },
     credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    optionsSuccessStatus: 200
-};
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
-// Apply CORS middleware
-app.use(cors(corsOptions));
-
-// Handle preflight requests explicitly
-app.options('*', cors(corsOptions));
+app.options('*', cors());
 
 // Body parser middleware
 app.use(express.json());
@@ -35,7 +54,6 @@ app.use(express.static(path.join(__dirname)));
 // Logging middleware
 app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-    console.log('Origin:', req.headers.origin);
     next();
 });
 
@@ -44,8 +62,7 @@ app.get('/health', (req, res) => {
     res.json({ 
         status: 'ok', 
         message: 'AI Stream Server is running',
-        timestamp: new Date().toISOString(),
-        env: process.env.NODE_ENV || 'development'
+        timestamp: new Date().toISOString()
     });
 });
 
@@ -74,117 +91,120 @@ const mockResponses = {
 
 // AI Stream endpoint
 app.post('/api/stream', (req, res) => {
-    try {
-        console.log('✅ Stream request received');
-        console.log('Request headers:', JSON.stringify(req.headers, null, 2));
-        
-        const { prompt } = req.body;
+    console.log('✅ Stream request received');
+    
+    const { prompt } = req.body;
 
-        if (!prompt) {
-            console.log('❌ Error: No prompt provided');
-            return res.status(400).json({ error: 'Prompt is required' });
-        }
+    if (!prompt) {
+        console.log('❌ Error: No prompt provided');
+        return res.status(400).json({ error: 'Prompt is required' });
+    }
 
-        console.log('📝 Prompt:', prompt);
+    console.log('📝 Prompt:', prompt);
 
-        // Set headers for Server-Sent Events
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Accel-Buffering', 'no');
-        
-        // Important: Send the headers immediately
-        res.flushHeaders();
-        console.log('📤 Headers sent');
+    // CRITICAL: Set headers before any writes
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+        'Access-Control-Allow-Origin': '*'
+    });
 
-        // Get response based on prompt keywords
-        const lowerPrompt = prompt.toLowerCase();
-        let responseText = mockResponses.default;
-        
-        for (const [key, value] of Object.entries(mockResponses)) {
-            if (key !== 'default' && lowerPrompt.includes(key)) {
-                responseText = value;
-                console.log('🎯 Matched keyword:', key);
-                break;
-            }
-        }
-
-        const fullResponse = `📝 You asked: "${prompt}"\n\n${responseText}\n\n⏰ Generated at: ${new Date().toLocaleTimeString()}`;
-
-        console.log('🚀 Starting stream... (', fullResponse.length, 'chars)');
-
-        // Send initial heartbeat to ensure connection is established
-        res.write(': heartbeat\n\n');
-        console.log('💓 Heartbeat sent');
-
-        // Stream the response character by character
-        let index = 0;
-        let clientDisconnected = false;
-        
-        const streamInterval = setInterval(() => {
-            try {
-                if (clientDisconnected) {
-                    clearInterval(streamInterval);
-                    return;
-                }
-                
-                if (index < fullResponse.length) {
-                    const char = fullResponse[index];
-                    const success = res.write(`data: ${JSON.stringify({ chunk: char, done: false })}\n\n`);
-                    
-                    if (!success) {
-                        console.log('⚠️ Write buffer full, waiting for drain...');
-                    }
-                    
-                    if (index % 20 === 0) {
-                        console.log(`📊 Progress: ${index}/${fullResponse.length}`);
-                    }
-                    
-                    index++;
-                } else {
-                    res.write(`data: ${JSON.stringify({ 
-                        done: true, 
-                        totalChars: fullResponse.length,
-                        message: 'Stream complete'
-                    })}\n\n`);
-                    clearInterval(streamInterval);
-                    res.end();
-                    console.log('✅ Stream completed successfully');
-                }
-            } catch (err) {
-                console.error('❌ Error during streaming:', err);
-                clearInterval(streamInterval);
-                if (!res.headersSent) {
-                    res.status(500).end();
-                }
-            }
-        }, 30);
-
-        // Handle client disconnect
-        req.on('close', () => {
-            clientDisconnected = true;
-            clearInterval(streamInterval);
-            console.log('🔌 Client disconnected from stream');
-        });
-
-        req.on('error', (err) => {
-            clientDisconnected = true;
-            console.error('❌ Request error:', err);
-            clearInterval(streamInterval);
-        });
-        
-        // Prevent request timeout
-        req.setTimeout(0);
-
-    } catch (error) {
-        console.error('❌ Error in /api/stream:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ 
-                error: 'Internal server error',
-                message: error.message
-            });
+    // Get response based on prompt keywords
+    const lowerPrompt = prompt.toLowerCase();
+    let responseText = mockResponses.default;
+    
+    for (const [key, value] of Object.entries(mockResponses)) {
+        if (key !== 'default' && lowerPrompt.includes(key)) {
+            responseText = value;
+            console.log('🎯 Matched keyword:', key);
+            break;
         }
     }
+
+    const fullResponse = `📝 You asked: "${prompt}"\n\n${responseText}\n\n⏰ Generated at: ${new Date().toLocaleTimeString()}`;
+
+    console.log('🚀 Starting stream... (', fullResponse.length, 'chars)');
+
+    // Send initial comment to establish connection
+    res.write(': connected\n\n');
+    
+    // Force flush the initial response
+    if (res.flush) res.flush();
+    
+    // Stream the response character by character
+    let index = 0;
+    let stopped = false;
+    
+    const streamInterval = setInterval(() => {
+        if (stopped) {
+            return;
+        }
+        
+        try {
+            if (index < fullResponse.length) {
+                const char = fullResponse[index];
+                const line = `data: ${JSON.stringify({ chunk: char, done: false })}\n\n`;
+                
+                // Write and immediately flush
+                res.write(line);
+                
+                // Force flush after every write
+                if (res.flush) res.flush();
+                
+                if (!canContinue) {
+                    console.log('⚠️ Buffer full, pausing...');
+                    res.once('drain', () => {
+                        console.log('✅ Buffer drained, continuing...');
+                    });
+                }
+                
+                // Log progress every 50 chars
+                if (index % 50 === 0 && index > 0) {
+                    console.log(`📊 Progress: ${index}/${fullResponse.length} chars sent`);
+                }
+                
+                index++;
+            } else {
+                // Send completion message
+                res.write(`data: ${JSON.stringify({ 
+                    done: true, 
+                    totalChars: fullResponse.length,
+                    message: 'Stream complete'
+                })}\n\n`);
+                
+                clearInterval(streamInterval);
+                res.end();
+                console.log('✅ Stream completed successfully');
+                stopped = true;
+            }
+        } catch (err) {
+            console.error('❌ Error during streaming:', err);
+            clearInterval(streamInterval);
+            stopped = true;
+            try {
+                res.end();
+            } catch (e) {
+                // Ignore if already ended
+            }
+        }
+    }, 30); // 30ms per character
+
+    // Handle client disconnect
+    req.on('close', () => {
+        if (!stopped) {
+            console.log('🔌 Client disconnected from stream');
+            clearInterval(streamInterval);
+            stopped = true;
+        }
+    });
+
+    req.on('error', (err) => {
+        console.error('❌ Request error:', err);
+        clearInterval(streamInterval);
+        stopped = true;
+    });
 });
 
 // Error handling middleware
@@ -207,9 +227,12 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`   AI Stream Server running on port ${PORT}`);
     console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`   Time: ${new Date().toISOString()}`);
-    console.log(`   CORS: Enabled for all origins`);
     console.log('🚀========================================🚀');
 });
+
+// Set longer timeout for streams
+server.keepAliveTimeout = 120000; // 120 seconds
+server.headersTimeout = 120000; // 120 seconds
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
