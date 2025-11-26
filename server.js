@@ -76,6 +76,7 @@ const mockResponses = {
 app.post('/api/stream', (req, res) => {
     try {
         console.log('✅ Stream request received');
+        console.log('Request headers:', JSON.stringify(req.headers, null, 2));
         
         const { prompt } = req.body;
 
@@ -91,6 +92,10 @@ app.post('/api/stream', (req, res) => {
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('X-Accel-Buffering', 'no');
+        
+        // Important: Send the headers immediately
+        res.flushHeaders();
+        console.log('📤 Headers sent');
 
         // Get response based on prompt keywords
         const lowerPrompt = prompt.toLowerCase();
@@ -108,13 +113,33 @@ app.post('/api/stream', (req, res) => {
 
         console.log('🚀 Starting stream... (', fullResponse.length, 'chars)');
 
+        // Send initial heartbeat to ensure connection is established
+        res.write(': heartbeat\n\n');
+        console.log('💓 Heartbeat sent');
+
         // Stream the response character by character
         let index = 0;
+        let clientDisconnected = false;
+        
         const streamInterval = setInterval(() => {
             try {
+                if (clientDisconnected) {
+                    clearInterval(streamInterval);
+                    return;
+                }
+                
                 if (index < fullResponse.length) {
                     const char = fullResponse[index];
-                    res.write(`data: ${JSON.stringify({ chunk: char, done: false })}\n\n`);
+                    const success = res.write(`data: ${JSON.stringify({ chunk: char, done: false })}\n\n`);
+                    
+                    if (!success) {
+                        console.log('⚠️ Write buffer full, waiting for drain...');
+                    }
+                    
+                    if (index % 20 === 0) {
+                        console.log(`📊 Progress: ${index}/${fullResponse.length}`);
+                    }
+                    
                     index++;
                 } else {
                     res.write(`data: ${JSON.stringify({ 
@@ -137,14 +162,19 @@ app.post('/api/stream', (req, res) => {
 
         // Handle client disconnect
         req.on('close', () => {
+            clientDisconnected = true;
             clearInterval(streamInterval);
             console.log('🔌 Client disconnected from stream');
         });
 
         req.on('error', (err) => {
+            clientDisconnected = true;
             console.error('❌ Request error:', err);
             clearInterval(streamInterval);
         });
+        
+        // Prevent request timeout
+        req.setTimeout(0);
 
     } catch (error) {
         console.error('❌ Error in /api/stream:', error);
